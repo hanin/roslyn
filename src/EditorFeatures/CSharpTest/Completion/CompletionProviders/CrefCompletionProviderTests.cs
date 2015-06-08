@@ -882,11 +882,6 @@ class C
                 throw new NotImplementedException();
             }
 
-            public string GetDisplayName(SyntaxNode node, DisplayNameOptions options, string rootNamespace = null)
-            {
-                throw new NotImplementedException();
-            }
-
             public bool TryGetExternalSourceInfo(SyntaxNode directive, out ExternalSourceInfo info)
             {
                 throw new NotImplementedException();

@@ -111,6 +111,9 @@
     <Compile Include="..\..\..\Compilers\Core\Portable\InternalUtilities\ComStreamWrapper.cs">
       <Link>InternalUtilities\ComStreamWrapper.cs</Link>
     </Compile>
+    <Compile Include="..\..\..\Compilers\Core\Portable\Collections\PooledStringBuilder.cs">
+      <Link>Collections\PooledStringBuilder.cs</Link>
+    </Compile>
     <Compile Include="..\..\..\Test\PdbUtilities\Shared\SymUnmanagedReaderExtensions.cs">
       <Link>Shared\SymUnmanagedReaderExtensions.cs</Link>
     </Compile>

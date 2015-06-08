@@ -7,7 +7,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
-using Microsoft.CodeAnalysis.Collections;
 using Microsoft.CodeAnalysis.CSharp.Extensions;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
@@ -957,152 +956,119 @@ namespace Microsoft.CodeAnalysis.CSharp
             }
         }
 
-        private string GetContainerDisplayName(SyntaxNode node)
+        private static string GetContainerDisplayName(SyntaxNode node)
         {
-            return GetDisplayName(node, DisplayNameOptions.IncludeTypeParameters);
+            return GetContainer(node, immediate: true);
         }
 
-        private string GetFullyQualifiedContainerName(SyntaxNode node)
+        private static string GetFullyQualifiedContainerName(SyntaxNode node)
         {
-            return GetDisplayName(node, DisplayNameOptions.IncludeNamespaces);
+            return GetContainer(node, immediate: false);
         }
 
-        private const string dotToken = ".";
-
-        public string GetDisplayName(SyntaxNode node, DisplayNameOptions options, string rootNamespace = null)
+        private static string GetContainer(SyntaxNode node, bool immediate)
         {
             if (node == null)
             {
                 return string.Empty;
             }
 
-            var pooled = PooledStringBuilder.GetInstance();
-            var builder = pooled.Builder;
+            var name = GetNodeName(node, includeTypeParameters: immediate);
+            var names = new List<string> { name };
 
-            // return type
-            var memberDeclaration = node as MemberDeclarationSyntax;
-            if ((options & DisplayNameOptions.IncludeType) != 0)
-            {
-                var type = memberDeclaration.GetMemberType();
-                if (type != null && !type.IsMissing)
-                {
-                    builder.Append(type);
-                    builder.Append(' ');
-                }
-            }
-
-            var names = ArrayBuilder<string>.GetInstance();
-            // containing type(s)
-            var parent = (SyntaxNode)node.GetAncestor<TypeDeclarationSyntax>() ?? node.Parent;
+            // check for nested classes and always add that to the container name.
+            var parent = node.Parent;
             while (parent is TypeDeclarationSyntax)
             {
-                names.Push(GetName(parent, options));
-                parent = parent.Parent;
+                var currentParent = (TypeDeclarationSyntax)parent;
+                names.Add(currentParent.Identifier.ValueText + (immediate ? ExpandTypeParameterList(currentParent.TypeParameterList) : ""));
+                parent = currentParent.Parent;
             }
-            // containing namespace(s) in source (if any)
-            if ((options & DisplayNameOptions.IncludeNamespaces) != 0)
+
+            // If they're just asking for the immediate parent, then we're done. Otherwise keep 
+            // walking all the way to the root, adding the names.
+            if (!immediate)
             {
-                while (parent != null && parent.Kind() == SyntaxKind.NamespaceDeclaration)
+                while (parent != null && parent.Kind() != SyntaxKind.CompilationUnit)
                 {
-                    names.Add(GetName(parent, options));
+                    names.Add(GetNodeName(parent, includeTypeParameters: false));
                     parent = parent.Parent;
                 }
             }
-            while (!names.IsEmpty())
-            {
-                var name = names.Pop();
-                if (name != null)
-                {
-                    builder.Append(name);
-                    builder.Append(dotToken);
-                }
-            }
 
-            // name (including generic type parameters)
-            builder.Append(GetName(node, options));
-
-            // parameter list (if any)
-            if ((options & DisplayNameOptions.IncludeParameters) != 0)
-            {
-                builder.Append(memberDeclaration.GetParameterList());
-            }
-
-            return pooled.ToStringAndFree();
+            names.Reverse();
+            return string.Join(".", names);
         }
 
-        private static string GetName(SyntaxNode node, DisplayNameOptions options)
+        private static string GetNodeName(SyntaxNode node, bool includeTypeParameters)
         {
-            const string missingTokenPlaceholder = "?";
-
+            string name;
+            TypeParameterListSyntax typeParameterList;
             switch (node.Kind())
             {
+                case SyntaxKind.ClassDeclaration:
+                    var classDecl = (ClassDeclarationSyntax)node;
+                    name = classDecl.Identifier.ValueText;
+                    typeParameterList = classDecl.TypeParameterList;
+                    break;
                 case SyntaxKind.CompilationUnit:
-                    return null;
+                    return string.Empty;
+                case SyntaxKind.DelegateDeclaration:
+                    var delegateDecl = (DelegateDeclarationSyntax)node;
+                    name = delegateDecl.Identifier.ValueText;
+                    typeParameterList = delegateDecl.TypeParameterList;
+                    break;
+                case SyntaxKind.EnumDeclaration:
+                    return ((EnumDeclarationSyntax)node).Identifier.ValueText;
                 case SyntaxKind.IdentifierName:
-                    var identifier = ((IdentifierNameSyntax)node).Identifier;
-                    return identifier.IsMissing ? missingTokenPlaceholder : identifier.Text;
+                    return ((IdentifierNameSyntax)node).Identifier.ValueText;
+                case SyntaxKind.InterfaceDeclaration:
+                    var interfaceDecl = (InterfaceDeclarationSyntax)node;
+                    name = interfaceDecl.Identifier.ValueText;
+                    typeParameterList = interfaceDecl.TypeParameterList;
+                    break;
+                case SyntaxKind.MethodDeclaration:
+                    var methodDecl = (MethodDeclarationSyntax)node;
+                    name = methodDecl.Identifier.ValueText;
+                    typeParameterList = methodDecl.TypeParameterList;
+                    break;
                 case SyntaxKind.NamespaceDeclaration:
-                    return GetName(((NamespaceDeclarationSyntax)node).Name, options);
+                    return GetNodeName(((NamespaceDeclarationSyntax)node).Name, includeTypeParameters: false);
                 case SyntaxKind.QualifiedName:
                     var qualified = (QualifiedNameSyntax)node;
-                    return GetName(qualified.Left, options) + dotToken + GetName(qualified.Right, options);
+                    return GetNodeName(qualified.Left, includeTypeParameters: false) + "." + GetNodeName(qualified.Right, includeTypeParameters: false);
+                case SyntaxKind.StructDeclaration:
+                    var structDecl = (StructDeclarationSyntax)node;
+                    name = structDecl.Identifier.ValueText;
+                    typeParameterList = structDecl.TypeParameterList;
+                    break;
+                default:
+                    Debug.Assert(false, "Unexpected node type " + node.Kind());
+                    return null;
             }
 
-            string name = null;
-            var memberDeclaration = node as MemberDeclarationSyntax;
-            if (memberDeclaration != null)
-            {
-                var nameToken = memberDeclaration.GetNameToken();
-                if (nameToken == default(SyntaxToken))
-                {
-                    Debug.Assert(memberDeclaration.Kind() == SyntaxKind.ConversionOperatorDeclaration);
-                    name = (memberDeclaration as ConversionOperatorDeclarationSyntax)?.Type.ToString();
-                }
-                else
-                {
-                    name = nameToken.IsMissing ? missingTokenPlaceholder : nameToken.Text;
-                    if (memberDeclaration.Kind() == SyntaxKind.DestructorDeclaration)
-                    {
-                        name = "~" + name;
-                    }
-                    if ((options & DisplayNameOptions.IncludeTypeParameters) != 0)
-                    {
-                        var pooled = PooledStringBuilder.GetInstance();
-                        var builder = pooled.Builder;
-                        builder.Append(name);
-                        AppendTypeParameterList(builder, memberDeclaration.GetTypeParameterList());
-                        name = pooled.ToStringAndFree();
-                    }
-                }
-            }
-            else
-            {
-                var fieldDeclarator = node as VariableDeclaratorSyntax;
-                if (fieldDeclarator != null)
-                {
-                    var nameToken = fieldDeclarator.Identifier;
-                    if (nameToken != default(SyntaxToken))
-                    {
-                        name = nameToken.IsMissing ? missingTokenPlaceholder : nameToken.Text;
-                    }
-                }
-            }
-            Debug.Assert(name != null, "Unexpected node type " + node.Kind());
-            return name;
+            return name + (includeTypeParameters ? ExpandTypeParameterList(typeParameterList) : "");
         }
 
-        private static void AppendTypeParameterList(StringBuilder builder, TypeParameterListSyntax typeParameterList)
+        private static string ExpandTypeParameterList(TypeParameterListSyntax typeParameterList)
         {
             if (typeParameterList != null && typeParameterList.Parameters.Count > 0)
             {
+                var builder = new StringBuilder();
                 builder.Append('<');
                 builder.Append(typeParameterList.Parameters[0].Identifier.ValueText);
                 for (int i = 1; i < typeParameterList.Parameters.Count; i++)
                 {
-                    builder.Append(", ");
+                    builder.Append(',');
                     builder.Append(typeParameterList.Parameters[i].Identifier.ValueText);
                 }
+
                 builder.Append('>');
+                return builder.ToString();
+            }
+            else
+            {
+                return null;
             }
         }
 

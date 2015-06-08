@@ -84,11 +84,14 @@ namespace Microsoft.VisualStudio.LanguageServices.Implementation.LanguageService
                 return false;
             }
 
-            description = syntaxFactsService.GetDisplayName(node,
-                DisplayNameOptions.IncludeMemberKeyword |
-                DisplayNameOptions.IncludeParameters |
-                DisplayNameOptions.IncludeType |
-                DisplayNameOptions.IncludeTypeParameters);
+            var semanticModel = document.GetSemanticModelAsync(cancellationToken).WaitAndGetResult(cancellationToken);
+            var symbol = semanticModel.GetDeclaredSymbol(node, cancellationToken);
+            if (symbol == null)
+            {
+                return false;
+            }
+
+            description = symbol.ToMinimalDisplayString(semanticModel, position);
             span = node.Span;
             return true;
         }
